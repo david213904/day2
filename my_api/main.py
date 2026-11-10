@@ -74,6 +74,7 @@ PRODUCTS = [
     {"id": "green-tea", "name": "한라산 녹차 티백", "price": 12000, "emoji": "🍵", "desc": "깊고 부드러운 녹차 30입", "tag": "차"},
     {"id": "tangerine-juice", "name": "감귤 착즙주스 10병", "price": 19000, "emoji": "🧃", "desc": "100% 감귤 원액 착즙", "tag": "음료"},
     {"id": "dolhareubang", "name": "돌하르방 미니 피규어", "price": 7500, "emoji": "🗿", "desc": "제주 여행 기념 소품", "tag": "기념품"},
+    {"id": "jeju-honey", "name": "제주 꿀 500g", "price": 18000, "emoji": "🍯", "desc": "제주 자연에서 채취한 순수 꿀", "tag": "식품"},
 ]
 PRODUCT_MAP = {p["id"]: p for p in PRODUCTS}
 MAX_QTY = 99
