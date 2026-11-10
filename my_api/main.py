@@ -22,6 +22,8 @@ app = FastAPI(title="my-api")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONT_ORIGINS,
+    # 내 컴퓨터의 아무 포트 + 내 Vercel 팀(jeju-ax)의 jeju-market 배포 주소(미리보기 포함)
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+|https://jeju-market(-[a-z0-9-]+)?-jeju-ax\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
