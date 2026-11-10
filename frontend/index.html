@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제주 마켓 — 장바구니</title>
+<meta name="description" content="제주의 맛을 집으로. 한라봉, 흑돼지, 오메기떡을 장바구니에 담아 보세요.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="#">🍊 <b>JEJU</b> MARKET</a>
+  <button class="cart-btn" id="openCart" aria-label="장바구니 열기">
+    🛒 <span>장바구니</span><em class="badge" id="badge">0</em>
+  </button>
+</header>
+
+<section class="hero">
+  <div>
+    <p class="eyebrow">제주에서 바로 보내는</p>
+    <h1>제주의 맛을<br>집으로 담아가세요</h1>
+    <p class="sub">마음에 드는 상품을 담으면 장바구니가 서버(Supabase)에 저장돼요.<br>새로고침해도 그대로 남아 있어요!</p>
+  </div>
+  <div class="hero-art" aria-hidden="true">🍊<i>🌊</i><i>🗿</i></div>
+</section>
+
+<main>
+  <div class="bar">
+    <h2>오늘의 제주 상품</h2>
+    <div class="chips" id="chips"></div>
+  </div>
+  <div id="notice" class="notice" hidden></div>
+  <div class="grid" id="grid"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+</main>
+
+<footer>제주 마켓 · 연습용 데모 사이트 (실제 결제·배송 없음)</footer>
+
+<div class="overlay" id="overlay" hidden></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <h3>🛒 내 장바구니</h3>
+    <button class="x" id="closeCart" aria-label="닫기">✕</button>
+  </div>
+  <div class="drawer-body" id="cartBody"></div>
+  <div class="drawer-foot">
+    <div class="sum"><span>총 결제 금액</span><b id="total">0원</b></div>
+    <button class="order" id="order">주문하기</button>
+    <button class="clear" id="clear">비우기</button>
+  </div>
+</aside>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

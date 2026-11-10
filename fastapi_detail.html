@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FastAPI · Supabase · Railway 동작 원리</title>
+<style>
+  :root{
+    --bg:#f4f6fa; --card:#fff; --ink:#1c2733; --sub:#5d6c7b; --line:#d0d9e2;
+    --code:#0f1720; --codeink:#d6e2ee; --hl:#2f80ed40; --pkt:#8e44ad; --ok:#27ae60; --err:#e5484d;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0f151b; --card:#18212a; --ink:#e7eef5; --sub:#97a8b8; --line:#2c3a47; }
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65;padding:22px 14px 60px}
+  .wrap{max-width:1080px;margin:auto}
+  h1{font-size:1.6rem}
+  .lead{color:var(--sub);margin:4px 0 16px}
+  .tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .tab{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 13px;border-radius:20px;cursor:pointer;font:inherit;font-size:.9rem}
+  .tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  .tab.e{border-color:var(--err)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+
+  .stage{position:relative;display:flex;flex-wrap:wrap;justify-content:center;gap:14px 18px;padding:10px 4px 16px}
+  .node{flex:1 1 118px;max-width:150px;border:2px solid var(--c);border-radius:14px;padding:10px 6px;text-align:center;background:var(--card);transition:box-shadow .3s,transform .3s;position:relative;z-index:1}
+  .node.act{box-shadow:0 0 0 5px color-mix(in srgb,var(--c) 30%,transparent);transform:scale(1.05)}
+  .node.pulse{animation:pulse .9s ease 2}
+  @keyframes pulse{50%{box-shadow:0 0 0 12px color-mix(in srgb,var(--c) 25%,transparent)}}
+  .node .i{font-size:1.8rem;line-height:1.2}
+  .node b{display:block;font-size:.88rem;color:var(--c)}
+  .node small{display:block;font-size:.72rem;color:var(--sub);line-height:1.35}
+  .pkt{position:absolute;z-index:5;left:0;top:0;transform:translate(-50%,-50%);background:var(--pkt);color:#fff;font-size:.78rem;padding:4px 10px;border-radius:12px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.3);opacity:0;pointer-events:none}
+  .pkt.show{opacity:1}
+  .pkt.back{background:var(--ok)}
+  .pkt.err{background:var(--err)}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+  .say{border-left:6px solid var(--pkt);background:color-mix(in srgb,var(--pkt) 8%,transparent);border-radius:0 12px 12px 0;padding:12px 16px;min-height:150px}
+  .say.err{border-color:var(--err);background:color-mix(in srgb,var(--err) 8%,transparent)}
+  .say h3{font-size:1rem;margin-bottom:4px}
+  .say p{font-size:.93rem}
+  .say pre{margin-top:10px;background:var(--code);color:var(--codeink);padding:10px 12px;border-radius:10px;font:12.5px/1.55 Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+  .codebox{background:var(--code);color:var(--codeink);border-radius:12px;padding:8px 0;font:12.5px/1.6 Consolas,monospace;max-height:320px;overflow:auto}
+  .codebox .t{padding:0 14px 6px;color:#7f93a7;font-size:.75rem}
+  .ln{display:block;padding:0 14px;white-space:pre;border-left:4px solid transparent}
+  .ln i{color:#5d7186;font-style:normal;display:inline-block;width:2.2em;user-select:none}
+  .ln.hl{background:var(--hl);border-left-color:#4da3ff;color:#fff}
+  .codebox.dim{opacity:.55}
+
+  .ctrl{display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap}
+  .btn{background:#2f80ed;color:#fff;border:0;padding:9px 18px;border-radius:22px;font:inherit;cursor:pointer}
+  .btn.g{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  .dots{display:flex;gap:5px;margin-left:auto;flex-wrap:wrap}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer}
+  .dot.on{background:var(--pkt)}
+  .note{margin-top:22px;font-size:.88rem;color:var(--sub)}
+  @media (max-width:760px){.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚙️ main.py 한 줄 한 줄 — 동작 원리</h1>
+  <p class="lead">아래 단계 버튼을 누르면 <b>실제 main.py의 어느 줄</b>이 실행되는지 파란색으로 표시됩니다. 주황 말풍선은 지금 움직이는 "데이터"예요.</p>
+
+  <div class="tabs" id="tabs"></div>
+  <div class="card">
+    <div class="stage" id="stage"><div class="pkt" id="pkt"></div></div>
+    <div class="cols">
+      <div class="say" id="say"></div>
+      <div class="codebox" id="code"></div>
+    </div>
+    <div class="ctrl">
+      <button class="btn g" id="prev">‹ 이전</button>
+      <button class="btn" id="next">다음 단계 ›</button>
+      <button class="btn g" id="auto">▶ 자동 재생</button>
+      <div class="dots" id="dots"></div>
+    </div>
+  </div>
+  <p class="note">※ 오른쪽 코드는 <code>my_api/main.py</code> 그대로입니다. Supabase·Railway 내부 설명(5, 6번 탭)은 코드가 아니라 서비스가 하는 일을 설명한 것이라 코드 대신 관련 줄만 표시돼요.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const CODE = `import os
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from dotenv import load_dotenv
+from supabase import create_client
+
+load_dotenv()
+
+# 로컬에선 .env를 읽고, Railway에선 Variables가 이미 들어 있음
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
+FRONT_ORIGINS = [
+    o.strip() for o in os.getenv("FRONT_ORIGINS", "").split(",") if o.strip()
+]
+
+sb = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+
+app = FastAPI(title="my-api")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=FRONT_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+class ItemIn(BaseModel):
+    name: str
+
+
+@app.get("/items")
+def list_items():
+    try:
+        res = sb.table("items").select("*").order("id", desc=True).limit(50).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase 오류: {e}")
+    return res.data
+
+
+@app.post("/items")
+def create_item(item: ItemIn):
+    try:
+        res = sb.table("items").insert({"name": item.name}).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Supabase 오류: {e}")
+    return res.data[0]`.split("\n");
+
+const C = {b:"#2f80ed", o:"#f2994a", g:"#27ae60", p:"#9b51e0", r:"#e5484d", t:"#00a3a3", y:"#b8860b"};
+
+/* ───── 요청 하나가 지나가는 길 (2~4번 탭 공통) ───── */
+const N2 = [
+  {i:"🖥️",n:"브라우저",s:"화면 :5500",c:C.b},
+  {i:"🚪",n:"uvicorn",s:"8000번 문지기",c:C.y},
+  {i:"🛂",n:"CORS 검문",s:"22~28줄",c:C.p},
+  {i:"🗺️",n:"경로표 + 검사",s:"@app.post · ItemIn",c:C.t},
+  {i:"🧑‍🍳",n:"create_item()",s:"49~55줄",c:C.o},
+  {i:"📞",n:"sb (supabase-py)",s:"18줄",c:C.o},
+  {i:"🗄️",n:"Supabase",s:"인터넷 DB",c:C.g},
+];
+const REQ_RAW = `POST /items HTTP/1.1
+Host: 127.0.0.1:8000
+Origin: http://localhost:5500
+Content-Type: application/json
+
+{"name": "사과"}`;
+const S2 = [
+  {f:0,t:1,pkt:"POST /items",hl:[],title:"① 브라우저가 '편지(HTTP)'를 보낸다",
+   text:"화면의 fetch(...)가 글자로 된 편지를 8000번 포트로 보냅니다. 편지에는 '무슨 일(POST)', '어디로(/items)', '누가 보냈나(Origin)', '내용(JSON)'이 적혀 있어요. 그걸 받는 첫 문지기가 <b>uvicorn</b>입니다.",data:REQ_RAW},
+  {f:1,t:2,pkt:"요청 객체",hl:[[20,20]],title:"② uvicorn이 글자를 파이썬 객체로 바꿔 app에 넘긴다",
+   text:"uvicorn은 편지를 method·path·headers·body로 쪼개서 <b>app</b>(20줄에서 만든 FastAPI 주방)에게 넘겨요. 실행할 때 쓴 <code>main:app</code>이 바로 이 app입니다. 가장 바깥 문부터 차례로 통과합니다."},
+  {f:2,t:3,pkt:"Origin 확인",hl:[[14,16],[22,28]],title:"③ CORS 검문: 이 화면 주소가 허용 목록에 있나?",
+   text:"<code>Origin: http://localhost:5500</code>이 FRONT_ORIGINS(.env에서 읽은 목록)에 있는지 봅니다. 있으면 통과하고 응답에 허용 도장(Access-Control-Allow-Origin)을 찍을 준비를 해요. 없으면 서버는 일을 해도 <b>브라우저가 결과를 화면에 못 쓰게 막습니다.</b>"},
+  {f:3,t:4,pkt:"item.name='사과'",hl:[[36,37],[49,50]],title:"④ 경로표에서 함수 찾기 + 내용 검사(Pydantic)",
+   text:"'POST + /items' 를 경로표에서 찾으면 49줄의 <code>create_item</code>이 나옵니다. 그 전에 본문 JSON이 <code>ItemIn</code>(name은 글자여야 함)에 맞는지 검사해요. 통과하면 <b>item.name = '사과'</b> 를 들고 함수가 실행됩니다. (맞지 않으면 → 3번 탭)"},
+  {f:4,t:5,pkt:"insert 준비",hl:[[52,52]],title:"⑤ 함수 안에서 창고에 부탁할 말을 만든다",
+   text:"<code>sb.table('items').insert({...})</code>는 '문장 조립'이에요. <code>.execute()</code>가 불리는 순간 비로소 인터넷으로 보냅니다. 전체를 <code>try</code>로 감싼 이유: 창고가 에러를 내도 서버가 죽지 않고 정리된 에러를 돌려주려고요."},
+  {f:5,t:6,pkt:"HTTPS POST /rest/v1/items",hl:[[12,13],[18,18]],title:"⑥ supabase-py가 Supabase로 요청을 쏜다",
+   text:".env에서 읽은 <b>URL 뒤에 /rest/v1/items</b>를 붙여서 보냅니다(그래서 URL에 /rest/v1/ 을 또 쓰면 오류). 헤더에 비밀 열쇠(SECRET KEY)를 실어서요. 이 안쪽은 5번 탭에서 자세히 봐요.",
+   data:`POST https://프로젝트ID.supabase.co/rest/v1/items
+apikey: sb_secret_********
+Authorization: Bearer sb_secret_********
+Prefer: return=representation
+
+{"name": "사과"}`},
+  {f:6,t:5,back:1,pkt:"201 [{id:1,…}]",hl:[],title:"⑦ Supabase가 '저장했어요' 하고 줄을 돌려준다",
+   text:"방금 저장된 줄이 <b>리스트</b>로 돌아옵니다. id(번호)와 created_at(시간)은 DB가 알아서 채워 준 값이에요.",data:`[{"id": 1, "name": "사과", "created_at": "2026-11-10T04:52:00+00:00"}]`},
+  {f:5,t:4,back:1,pkt:"res.data",hl:[[55,55]],title:"⑧ 함수가 첫 번째 줄을 return 한다",
+   text:"<code>res.data[0]</code> = 리스트의 첫 줄(딕셔너리). 함수는 여기서 끝나요."},
+  {f:4,t:2,back:1,pkt:"dict → JSON",hl:[],title:"⑨ FastAPI가 자동으로 JSON으로 바꾸고 허용 도장을 찍는다",
+   text:"return 한 파이썬 값을 FastAPI가 알아서 JSON 글자로 바꿔 200 응답을 만들고, CORS 검문소가 아까 준비한 <b>허용 도장</b>을 찍어요."},
+  {f:2,t:0,back:1,pkt:"200 OK + JSON",hl:[],title:"⑩ 브라우저에 응답 도착 → 화면이 목록을 새로고침",
+   text:"uvicorn이 응답을 글자 편지로 내보내고, 브라우저는 허용 도장을 확인한 뒤 화면에 사용합니다. 여기까지 보통 0.1~0.5초예요.",
+   data:`HTTP/1.1 200 OK
+access-control-allow-origin: http://localhost:5500
+content-type: application/json
+
+{"id":1,"name":"사과","created_at":"..."}`},
+];
+const S2b = [
+  ...S2.slice(0,4).map(s=>({...s})),
+];
+S2b[0].data = `POST /items HTTP/1.1
+Content-Type: application/json
+
+{}        ← name 이 빠졌어요!`;
+S2b[0].title = "① 이름 없이 주문이 들어왔다 (name 누락)";
+S2b[0].text = "화면에서 이름을 안 적고 보냈다고 가정해 볼게요. 본문이 <code>{}</code> 이에요.";
+S2b[3] = {f:3,t:0,err:1,back:1,pkt:"422 거절",hl:[[36,37],[49,50]],title:"④ 검사에서 탈락 → 함수는 실행조차 안 된다",
+  text:"<code>ItemIn</code>은 'name: str 필수'라고 선언돼 있어서 본문에 name 이 없으면 <b>create_item() 한 줄도 실행되지 않고</b> 곧바로 422(내용이 이상해요)로 돌려보내요. Supabase에도 가지 않습니다. 이 검사는 우리가 코드를 짜지 않아도 <code>name: str</code> 한 줄이 해 주는 FastAPI의 핵심 기능이에요.",
+  data:`HTTP 422
+{"detail":[{"loc":["body","name"],"msg":"Field required","type":"missing"}]}`};
+
+const S2c = [
+  ...S2.slice(0,6).map(s=>({...s})),
+  {f:6,t:5,back:1,err:1,pkt:"404 PGRST205",hl:[],title:"⑦ Supabase: '그런 표(table)는 없어요'",
+   text:"실제로 우리가 겪은 상황이에요. <b>items 표를 아직 안 만들었을 때</b> 이렇게 답합니다. (표 만들기: <code>my_api/schema.sql</code> 실행)",
+   data:`{"code":"PGRST205","message":"Could not find the table 'public.items' in the schema cache"}`},
+  {f:5,t:4,back:1,err:1,pkt:"Exception",hl:[[53,54]],title:"⑧ 파이썬이 예외(Exception)를 던지고, except 가 잡는다",
+   text:"supabase-py 가 에러를 예외로 바꿔 던지고, 52줄을 감싼 <code>try</code> 덕분에 53줄 <code>except</code> 로 점프합니다. 이게 없었다면 서버가 이상한 500 에러를 냈을 거예요."},
+  {f:4,t:0,back:1,err:1,pkt:"500 + detail",hl:[[54,54]],title:"⑨ HTTPException(500) 으로 정리해서 화면까지 전달",
+   text:"<code>raise HTTPException(500, detail=...)</code> 가 사람이 읽을 수 있는 에러 글을 만들어 돌려보냅니다. 테스트 페이지에 빨간 글씨로 뜬 그 문장이에요.",
+   data:`HTTP 500
+{"detail":"Supabase 오류: {'message': \\"Could not find the table 'public.items'...\\"}"}`},
+];
+
+/* ───── 1. 서버가 켜질 때 ───── */
+const N1 = [
+  {i:"⌨️",n:"터미널",s:"명령을 입력",c:C.b},
+  {i:"🚀",n:"uvicorn",s:"서버 프로그램",c:C.y},
+  {i:"📄",n:"main.py",s:"위→아래 실행",c:C.o},
+  {i:"🔑",n:".env",s:"비밀 쪽지",c:C.r},
+  {i:"📞",n:"sb",s:"창고 연결 도구",c:C.g},
+  {i:"🧑‍🍳",n:"app (FastAPI)",s:"경로표·출입규칙",c:C.t},
+];
+const S1 = [
+  {f:0,t:1,pkt:"uvicorn main:app",hl:[],title:"① 명령: 'main.py 안의 app 을 실행해 줘'",
+   text:"<code>main:app</code> = <b>main.py 파일 : app 이라는 이름</b>. uvicorn은 '파이썬 웹 서버 프로그램'이에요. FastAPI는 요리법(코드)이고, 실제로 8000번 포트를 열고 손님을 받는 건 uvicorn 입니다.",data:`python -m uvicorn main:app --reload --port 8000`},
+  {f:1,t:2,pkt:"main.py 열기",hl:[[1,7]],title:"② import: 필요한 도구상자를 꺼낸다",
+   text:"파이썬은 파일을 <b>위에서 아래로 한 줄씩</b> 실행해요. 1~7줄은 fastapi, supabase 같은 도구를 가져오는 줄. 이 도구들은 가상환경 <code>vjeju</code> 안에 설치돼 있어서, 가상환경을 안 켜면 <i>No module named uvicorn</i> 오류가 났던 거예요."},
+  {f:2,t:3,pkt:"load_dotenv()",hl:[[9,9]],title:"③ .env 쪽지를 열어 환경변수로 올려 둔다",
+   text:".env 의 <code>KEY=값</code> 줄들이 '환경변수'(컴퓨터의 임시 메모)로 올라갑니다. 비밀번호를 코드에 직접 쓰지 않으려는 방법이에요."},
+  {f:3,t:2,back:1,pkt:"URL · KEY · 허용주소",hl:[[11,16]],title:"④ 메모에서 값을 꺼내 변수에 담는다",
+   text:"<code>os.environ[\"...\"]</code>는 값이 없으면 <b>즉시 KeyError 로 서버가 안 켜져요</b>(일부러 엄격하게). 반대로 <code>os.getenv(\"FRONT_ORIGINS\", \"\")</code>는 없으면 빈 값. 쉼표로 쪼개 리스트로 만듭니다. Railway에서는 .env 가 없고 Variables 가 이 메모 역할을 해요."},
+  {f:2,t:4,pkt:"create_client",hl:[[18,18]],title:"⑤ 창고 연결 도구 sb 를 만든다",
+   text:"주소(URL)와 열쇠를 들고 있는 도구 <b>sb</b> 가 만들어집니다. 이 줄에서는 아직 인터넷으로 아무것도 보내지 않아요. 나중에 <code>.execute()</code> 때 실제로 보냅니다."},
+  {f:2,t:5,pkt:"FastAPI()",hl:[[20,20]],title:"⑥ app = 주방을 연다 (아직 메뉴판은 비어 있음)",
+   text:"<code>app</code> 이 FastAPI 의 본체입니다. 이 객체가 '경로표'와 '출입 규칙'을 보관해요."},
+  {f:2,t:5,pkt:"add_middleware",hl:[[22,28]],title:"⑦ 출입 규칙(CORS) 설치",
+   text:"모든 요청이 지나가는 문에 검문소를 답니다. '허용된 화면 주소에서 온 요청만 결과를 쓸 수 있게 하자'는 규칙이에요."},
+  {f:2,t:5,pkt:"경로 3개 등록",hl:[[31,33],[40,46],[49,55]],title:"⑧ @app.get / @app.post → 경로표에 등록",
+   text:"<code>@app.get(\"/health\")</code> 같은 줄(데코레이터)은 함수를 <b>실행하는 게 아니라 메뉴판에 적어 두는 것</b>이에요.",
+   data:`경로표
+GET  /health → health()
+GET  /items  → list_items()
+POST /items  → create_item()
+(+ 자동 생성: /docs, /openapi.json)`},
+  {f:1,t:1,pkt:"",hl:[],title:"⑨ 8000번 창구를 열고 손님을 기다린다",
+   text:"main.py 가 끝까지 실행되면 uvicorn 이 창구를 열어요. <b>127.0.0.1</b> 은 '내 컴퓨터 안에서만'이라는 뜻이라 지금은 나만 접속할 수 있어요. 이제부터는 요청이 올 때마다 경로표를 보고 함수만 실행됩니다 (→ 2번 탭).",
+   data:`INFO: Application startup complete.
+INFO: Uvicorn running on http://127.0.0.1:8000`},
+];
+
+/* ───── 5. Supabase 안쪽 ───── */
+const N5 = [
+  {i:"📞",n:"supabase-py",s:"우리 서버 쪽",c:C.o},
+  {i:"🛡️",n:"API 관문",s:"열쇠 검사",c:C.r},
+  {i:"🔄",n:"PostgREST",s:"HTTP→SQL 번역기",c:C.t},
+  {i:"🐘",n:"PostgreSQL",s:"진짜 표 저장소",c:C.g},
+];
+const S5 = [
+  {f:0,t:1,pkt:"POST /rest/v1/items",hl:[[12,13],[18,18]],title:"① 주소를 읽는 법",
+   text:"<code>https://<b>프로젝트ID</b>.supabase.co</code>(내 프로젝트의 집 주소) + <code>/rest/v1/</code>(데이터 창구) + <code>items</code>(표 이름). 앞에서 URL 끝에 /rest/v1/ 이 이미 붙어 있으면 '경로가 이중'이라 <b>PGRST125</b> 에러가 났던 겁니다.",
+   data:`POST https://프로젝트ID.supabase.co/rest/v1/items
+apikey: sb_secret_********`},
+  {f:1,t:1,pkt:"",hl:[],title:"② 관문이 열쇠의 종류를 확인한다",
+   text:"<b>publishable(공개) 키</b> = 'anon' 손님 권한 → <b>RLS(행 보안 규칙)</b> 이 허용한 것만 가능. <b>secret(비밀) 키</b> = 'service_role' 관리자 권한 → RLS 를 건너뛰고 전부 가능. 그래서 secret 키는 <b>서버(.env / Railway Variables)에만</b> 두고 프론트 코드에는 절대 넣지 않아요."},
+  {f:1,t:2,pkt:"통과",hl:[],title:"③ 통과한 요청을 PostgREST 가 받는다",
+   text:"PostgREST 는 'HTTP 요청을 DB 명령으로 자동 번역해 주는 프로그램'이에요. 그래서 우리가 서버에 SQL 을 직접 쓰지 않아도 됩니다."},
+  {f:2,t:3,pkt:"insert into …",hl:[],title:"④ 번역된 SQL 이 데이터베이스로",
+   text:"URL(표 이름) + 방식(POST) + 본문(JSON)이 이런 SQL 문장으로 바뀌어요.",
+   data:`insert into public.items (name)
+values ('사과')
+returning *;`},
+  {f:3,t:3,pkt:"",hl:[],title:"⑤ 표에 한 줄이 실제로 저장된다",
+   text:"schema.sql 에서 정한 대로 <b>id 는 자동 번호</b>(generated always as identity), <b>created_at 은 현재 시각</b>(default now())이 채워지고 디스크에 저장됩니다. 서버를 껐다 켜도 데이터가 남아 있는 이유예요 — 저장 장소가 우리 컴퓨터가 아니라 Supabase 니까요."},
+  {f:3,t:2,back:1,pkt:"새 줄",hl:[],title:"⑥ 저장된 줄을 돌려준다 (returning *)",
+   text:"방금 저장한 줄을 그대로 돌려받습니다."},
+  {f:2,t:0,back:1,pkt:"201 JSON",hl:[[52,52],[55,55]],title:"⑦ JSON 으로 포장돼 우리 서버에 도착",
+   text:"supabase-py 가 받아서 <code>res.data</code> 에 넣어 둬요. 52줄의 <code>res</code> 와 55줄의 <code>res.data[0]</code> 이 이 결과입니다."},
+  {f:0,t:0,pkt:"",hl:[],err:1,title:"⑧ 에러 코드 읽는 법 (우리가 실제로 만난 것)",
+   text:"<b>PGRST125</b> = 주소 경로가 잘못됨 (URL 에 /rest/v1/ 중복)<br><b>PGRST205</b> = 그런 표가 없음 (schema.sql 을 아직 실행 안 함)<br>이 코드들이 53~54줄에서 예외로 잡혀 500 으로 정리돼 나옵니다."},
+];
+
+/* ───── 6. Railway ───── */
+const N6 = [
+  {i:"💻",n:"내 컴퓨터",s:"git push",c:C.b},
+  {i:"🐙",n:"GitHub",s:"코드 보관함",c:C.y},
+  {i:"🏗️",n:"Railway 빌더",s:"설치·포장",c:C.p},
+  {i:"📦",n:"Railway 서버",s:"main.py 가 24시간",c:C.o},
+  {i:"🔐",n:"Variables",s:".env 대신",c:C.r},
+  {i:"🌍",n:"인터넷 손님",s:"Vercel 화면",c:C.g},
+];
+const S6 = [
+  {f:0,t:1,pkt:"git push",hl:[],title:"① 코드를 GitHub 에 올린다",
+   text:"올라가는 건 <b>코드뿐</b>이에요. <code>.env</code> 는 .gitignore 에 적어 둬서 올라가지 않아요(열쇠 유출 방지). 그래서 Railway 는 열쇠를 따로 받아야 합니다."},
+  {f:1,t:2,pkt:"새 코드 감지",hl:[],title:"② Railway 가 변경을 감지해서 자동 배포를 시작",
+   text:"Railway 프로젝트에 GitHub 저장소를 연결해 두면 push 할 때마다 자동으로 다시 만들어요."},
+  {f:2,t:2,pkt:"",hl:[],title:"③ 빌드: 파이썬 프로젝트인지 보고 패키지를 설치",
+   text:"설정한 <b>Root Directory</b>(예: my_api) 안에서 <code>requirements.txt</code> 를 찾아 <code>pip install</code> 을 합니다. ⚠️ 지금 requirements.txt 는 <b>Day2 맨 위</b>에 있어요 — Root Directory 를 my_api 로 할 거면 my_api 안으로 옮겨야 Railway 가 찾습니다.",
+   data:`pip install -r requirements.txt
+→ fastapi, uvicorn, supabase, python-dotenv …`},
+  {f:2,t:3,pkt:"포장된 앱",hl:[],title:"④ 포장된 앱을 Railway 의 서버 컴퓨터에 올린다",
+   text:"내 컴퓨터가 아니라 <b>Railway 가 빌려주는 컴퓨터(컨테이너)</b>에서 실행될 준비를 합니다."},
+  {f:4,t:3,pkt:"환경변수 주입",hl:[[9,16]],title:"⑤ Variables 칸의 값이 환경변수로 들어간다",
+   text:"Railway 대시보드 Variables 에 <code>SUPABASE_URL</code>, <code>SUPABASE_SECRET_KEY</code>, <code>FRONT_ORIGINS</code>(= Vercel 주소)를 직접 입력하면 .env 와 똑같이 <code>os.environ</code> 으로 읽혀요. 서버에는 .env 파일이 없으니 9줄 <code>load_dotenv()</code> 는 조용히 아무것도 안 하고, 11줄 주석의 뜻이 바로 이거예요."},
+  {f:3,t:3,pkt:"",hl:[],title:"⑥ 시작 명령으로 서버를 켠다",
+   text:"로컬과 다른 점 두 가지! <code>--host 0.0.0.0</code> = <b>바깥에서 오는 접속도 받겠다</b>(127.0.0.1 이면 서버 컴퓨터 안에서만 열려서 접속이 안 돼요). <code>$PORT</code> = Railway 가 정해 주는 포트 번호.",
+   data:`uvicorn main:app --host 0.0.0.0 --port $PORT`},
+  {f:5,t:3,pkt:"https://….up.railway.app/items",hl:[],title:"⑦ 인터넷 손님이 공개 주소로 접속한다",
+   text:"Railway 가 공개 주소(도메인)를 만들어 주고, 앞단의 프록시가 HTTPS 를 처리한 뒤 내 서버로 전달합니다. 서버 안에서 벌어지는 일(검문→경로표→Supabase)은 2번·5번 탭과 똑같아요."},
+  {f:3,t:5,back:1,pkt:"200 + CORS 도장",hl:[[14,16],[22,28]],title:"⑧ 응답이 돌아간다 — 단, FRONT_ORIGINS 에 Vercel 주소가 있어야",
+   text:"화면이 Vercel 주소(예: https://my.vercel.app)에서 열려 있다면 <b>그 주소가 FRONT_ORIGINS 에 있어야</b> CORS 검문을 통과해요. 로컬 주소(localhost:5500)만 넣어 두면 배포 후 화면에서 에러가 납니다."},
+  {f:3,t:3,pkt:"",hl:[],title:"⑨ 24시간 켜져 있고, 죽으면 다시 켜 준다",
+   text:"내 컴퓨터를 꺼도 Railway 의 서버는 계속 일해요. 오류로 멈추면 자동 재시작하고, 로그(INFO 글자들)는 Railway 대시보드에서 볼 수 있어요. 창고(Supabase)는 처음부터 인터넷에 있으므로 어디서 부르든 같은 데이터를 봅니다."},
+];
+
+const CHAPS = [
+  {name:"1. 서버가 켜질 때",nodes:N1,steps:S1},
+  {name:"2. 요청 따라가기 (저장)",nodes:N2,steps:S2},
+  {name:"3. 실패① 내용이 이상할 때 (422)",nodes:N2,steps:S2b,e:1},
+  {name:"4. 실패② 창고 문제 (500)",nodes:N2,steps:S2c,e:1},
+  {name:"5. Supabase 안쪽",nodes:N5,steps:S5},
+  {name:"6. Railway 배포",nodes:N6,steps:S6},
+];
+
+/* ───── 엔진 ───── */
+let ch=0, st=-1, timer=null, raf=null, pos=null;
+const stage=$("stage"), pkt=$("pkt");
+
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;");}
+function buildTabs(){
+  $("tabs").innerHTML="";
+  CHAPS.forEach((c,i)=>{const b=document.createElement("button");b.className="tab"+(c.e?" e":"");b.textContent=c.name;b.onclick=()=>selectChap(i);$("tabs").appendChild(b);});
+}
+function selectChap(i){
+  ch=i; st=-1; stopAuto(); cancelAnimationFrame(raf); pos=null;
+  [...$("tabs").children].forEach((b,j)=>b.classList.toggle("on",j===i));
+  [...stage.querySelectorAll(".node")].forEach(n=>n.remove());
+  CHAPS[i].nodes.forEach((n,k)=>{
+    const d=document.createElement("div");d.className="node";d.style.setProperty("--c",n.c);d.id="n"+k;
+    d.innerHTML=`<div class="i">${n.i}</div><b>${n.n}</b><small>${n.s}</small>`;stage.appendChild(d);
+  });
+  $("dots").innerHTML=CHAPS[i].steps.map((_,k)=>`<span class="dot" data-k="${k}"></span>`).join("");
+  [...$("dots").children].forEach(d=>d.onclick=()=>{stopAuto();show(+d.dataset.k);});
+  pkt.classList.remove("show");
+  renderCode([]);
+  $("say").className="say";
+  $("say").innerHTML="<h3>▶ '다음 단계'를 눌러 시작하세요</h3><p>"+CHAPS[i].name+" — 총 "+CHAPS[i].steps.length+"단계</p>";
+}
+function renderCode(hl){
+  const set=new Set();hl.forEach(([a,b])=>{for(let k=a;k<=b;k++)set.add(k);});
+  const box=$("code");
+  box.innerHTML='<div class="t">my_api/main.py</div>'+CODE.map((l,k)=>`<span class="ln${set.has(k+1)?" hl":""}"><i>${k+1}</i>${esc(l)||" "}</span>`).join("");
+  box.classList.toggle("dim",hl.length===0);
+  const first=box.querySelector(".hl");
+  if(first) box.scrollTop=Math.max(0,first.offsetTop-box.offsetTop-60);
+}
+function center(k){const n=$("n"+k);return {x:n.offsetLeft+n.offsetWidth/2,y:n.offsetTop+n.offsetHeight/2};}
+
+function show(i){
+  const S=CHAPS[ch].steps; if(i<0||i>=S.length) return;
+  st=i; const s=S[i];
+  [...$("dots").children].forEach((d,k)=>d.classList.toggle("on",k<=i));
+  [...stage.querySelectorAll(".node")].forEach(n=>n.classList.remove("act","pulse"));
+  $("say").className="say"+(s.err?" err":"");
+  $("say").innerHTML=`<h3>${s.title}</h3><p>${s.text}</p>${s.data?"<pre>"+esc(s.data)+"</pre>":""}`;
+  renderCode(s.hl||[]);
+  const a=center(s.f), b=center(s.t);
+  pkt.className="pkt"+(s.back?" back":"")+(s.err?" err":"");
+  if(s.f===s.t){
+    pkt.classList.remove("show"); $("n"+s.f).classList.add("pulse","act"); pos=null; return;
+  }
+  pkt.textContent=s.pkt;
+  const start=pos&&Math.abs(pos.x-a.x)+Math.abs(pos.y-a.y)<4?pos:a;
+  pkt.classList.add("show"); $("n"+s.f).classList.add("act");
+  const t0=performance.now(),dur=1100;cancelAnimationFrame(raf);
+  (function f(now){
+    const t=Math.min(1,(now-t0)/dur),e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    pos={x:start.x+(b.x-start.x)*e,y:start.y+(b.y-start.y)*e};
+    pkt.style.left=pos.x+"px";pkt.style.top=pos.y+"px";
+    if(t<1)raf=requestAnimationFrame(f);else{$("n"+s.t).classList.add("act");}
+  })(t0);
+}
+function stopAuto(){clearInterval(timer);timer=null;$("auto").textContent="▶ 자동 재생";}
+$("next").onclick=()=>{stopAuto();if(st+1<CHAPS[ch].steps.length)show(st+1);};
+$("prev").onclick=()=>{stopAuto();if(st>0)show(st-1);};
+$("auto").onclick=()=>{
+  if(timer){stopAuto();return;}
+  $("auto").textContent="⏸ 멈춤";
+  if(st>=CHAPS[ch].steps.length-1)st=-1;
+  show(st+1);
+  timer=setInterval(()=>{ if(st+1>=CHAPS[ch].steps.length){stopAuto();return;} show(st+1); },4500);
+};
+addEventListener("resize",()=>{pos=null;});
+buildTabs();selectChap(0);
+</script>
+</body>
+</html>
