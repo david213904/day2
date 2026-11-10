@@ -3,3 +3,4 @@
 vjeju/
 __pycache__/
 uvicorn.log
+.vercel

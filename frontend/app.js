@@ -15,7 +15,7 @@ function getCartId() {
 }
 const CART_ID = getCartId();
 
-let products = [], cart = {items: [], total: 0, count: 0}, filter = "전체", busy = false;
+let products = [], cart = {items: [], total: 0, count: 0}, filter = "전체";
 
 async function api(path, opts = {}) {
   let res;
@@ -76,16 +76,25 @@ function renderCart() {
     </div>`).join("") : `<div class="empty"><b>🧺</b>장바구니가 비어 있어요.<br>마음에 드는 상품을 담아 보세요!</div>`;
 }
 
-async function run(fn, okMsg) {
-  if (busy) return;
-  busy = true;
-  try { cart = await fn(); renderCart(); notice(""); if (okMsg) toast(okMsg); }
-  catch (e) { notice(e.message); toast("앗, 문제가 생겼어요"); }
-  finally { busy = false; }
+// 요청은 눌린 순서대로 하나씩 처리한다 (빠르게 연타해도 빠지지 않게)
+let queue = Promise.resolve();
+function run(fn, okMsg) {
+  queue = queue.then(async () => {
+    try { cart = await fn(); renderCart(); notice(""); if (okMsg) toast(okMsg); }
+    catch (e) { notice(e.message); toast("앗, 문제가 생겼어요"); }
+  });
+  return queue;
 }
 const addItem = (id) => run(() => api(`/cart/${CART_ID}/items`, {method: "POST", body: {product_id: id, qty: 1}}), "장바구니에 담았어요 🛒");
 const delItem = (id) => run(() => api(`/cart/${CART_ID}/items/${id}`, {method: "DELETE"}), "삭제했어요");
-const setQty = (id, q) => q < 1 ? delItem(id) : run(() => api(`/cart/${CART_ID}/items/${id}`, {method: "PATCH", body: {qty: q}}));
+// 수량 변경은 "실행되는 순간"의 수량을 기준으로 계산 (연타해도 정확하게)
+const change = (id, d) => run(() => {
+  const it = cart.items.find((x) => x.id === id);
+  if (!it) return Promise.resolve(cart);
+  const q = it.qty + d;
+  return q < 1 ? api(`/cart/${CART_ID}/items/${id}`, {method: "DELETE"})
+               : api(`/cart/${CART_ID}/items/${id}`, {method: "PATCH", body: {qty: q}});
+});
 
 function openCart(open) {
   const o = $("overlay"), d = $("drawer");
@@ -96,12 +105,12 @@ function openCart(open) {
 
 document.addEventListener("click", (e) => {
   const t = e.target.closest("button"); if (!t) return;
-  if (t.classList.contains("add")) { t.disabled = true; addItem(t.dataset.id).finally(() => (t.disabled = false)); }
+  if (t.classList.contains("add")) addItem(t.dataset.id);
   else if (t.classList.contains("chip")) { filter = t.dataset.t; renderChips(); renderGrid(); }
   else if (t.dataset.act) {
     const it = cart.items.find((x) => x.id === t.dataset.id); if (!it) return;
-    if (t.dataset.act === "inc") setQty(it.id, it.qty + 1);
-    if (t.dataset.act === "dec") setQty(it.id, it.qty - 1);
+    if (t.dataset.act === "inc") change(it.id, 1);
+    if (t.dataset.act === "dec") change(it.id, -1);
     if (t.dataset.act === "del") delItem(it.id);
   }
 });
